@@ -1,2 +1,4 @@
 ollama>=0.4.0
 streamlit>=1.46
+pytesseract>=0.3.10
+pillow>=10.0
