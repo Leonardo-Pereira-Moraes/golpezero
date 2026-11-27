@@ -355,7 +355,7 @@ with esq:
     if lista:
         with st.container(key="caixa_exemplos"):
             for i, ex in enumerate(lista):
-                resumo = " ".join(ex["texto"].split())
+                resumo = ex.get("titulo") or " ".join(ex["texto"].split())
                 resumo = resumo if len(resumo) <= 90 else resumo[:88] + "…"
                 st.button(f"{i + 1:02d} — {resumo}", key=f"ex{i}", on_click=usar_exemplo, args=(ex["texto"],), help=ex["texto"])
     else:

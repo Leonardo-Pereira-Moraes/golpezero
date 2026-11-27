@@ -45,6 +45,8 @@ MODELO = "qwen2.5:3b"  # troque por "qwen2.5:1.5b" se o notebook estiver lento
 KEEP_ALIVE = "30m"  # mantém o modelo carregado na memória durante o evento
 MAX_PASSOS = 4  # máximo de chamadas ao modelo no loop de ferramentas
 MAX_CARACTERES = 4000  # mensagens maiores são cortadas (protege a demo)
+LIMITE_CURTA = 8  # mensagens sem link com até 8 palavras são "curtas, sem contexto"
+PONTUACAO_PISO = 55  # piso: dinheiro + (urgência ou ameaça) -> no mínimo SUSPEITO 55
 
 # Mesmas opções em TODAS as chamadas: mudar num_ctx força o Ollama a recarregar o modelo.
 OPCOES = {"temperature": 0, "seed": 42, "num_ctx": 4096}
@@ -83,6 +85,12 @@ REGRAS
 link que imita banco, órgão público ou loja; "troquei de número"; prêmio ou dinheiro fácil; ameaça de bloqueio ou multa com prazo curto.
 5. Mensagens apenas informativas, sem pedido de dinheiro ou dados e sem links suspeitos, costumam ser legítimas.
 6. Escala de risco: SEGURO (0 a 30), SUSPEITO (31 a 69), GOLPE (70 a 100).
+7. NUNCA cite empresa, banco, valor ou link que não esteja escrito na mensagem.
+8. GOLPE exige um PEDIDO DE AÇÃO (clicar em link, pagar ou fazer Pix, enviar código, senha ou dados, ligar para um número) \
+somado a pelo menos um sinal de pressão ou de fraude (urgência, ameaça, link suspeito, falso parente, prêmio).
+9. Mensagem curta, sem contexto e sem pedido de ação: classifique como SEGURO ou SUSPEITO com pontuação baixa \
+e explique que falta informação para concluir.
+10. Os exemplos abaixo são só ilustração: não use nomes, empresas ou valores deles na sua análise.
 
 EXEMPLOS
 
@@ -159,7 +167,16 @@ por exemplo "Ameaça de cancelamento no mesmo dia" ou "Link falso imitando a Cai
 como "URGENTE" ou "R$". Lista vazia se for seguro.
 - "explicacao": 1 a 3 frases simples, para uma pessoa leiga, explicando o porquê
 - "orientacao": 1 a 2 frases dizendo o que a pessoa deve fazer agora
+Cite somente empresas, bancos, valores e links que estão escritos na mensagem analisada.
 Escreva em português do Brasil."""
+
+AVISO_CURTA = """OBSERVAÇÃO: a mensagem analisada é curta e sem contexto. O "explicacao" deve dizer \
+explicitamente que não há informação suficiente para concluir com segurança."""
+
+FRASE_SEM_INFORMACAO = "Não há informação suficiente na mensagem para concluir com segurança."
+
+AVISO_ALUCINACAO = """Atenção: não cite entidades ausentes da mensagem. Sua resposta citou {marcas}, \
+mas a mensagem analisada não menciona isso. Refaça o veredito em JSON usando apenas o que está escrito na mensagem."""
 
 # ---------------------------------------------------------------------------
 # Pré-processamento
@@ -207,6 +224,47 @@ def _chave_url(url: str) -> str:
 
 def _chave_texto(texto: str) -> str:
     return re.sub(r"\s+", " ", (texto or "").lower()).strip()
+
+
+def _sem_acento(texto: str) -> str:
+    decomposto = unicodedata.normalize("NFKD", (texto or "").casefold())
+    return "".join(c for c in decomposto if not unicodedata.combining(c))
+
+
+# ---------------------------------------------------------------------------
+# Marcas conhecidas (lista "marcas" do padroes.json) — usadas na checagem anti-alucinação
+# ---------------------------------------------------------------------------
+def _carregar_marcas() -> tuple[str, ...]:
+    marcas = []
+    try:
+        dados = json.loads(Path(__file__).with_name("padroes.json").read_text(encoding="utf-8"))
+        marcas = dados.get("marcas") or []
+    except (OSError, ValueError, AttributeError):
+        pass
+    if not marcas:
+        try:
+            from ferramentas_mock import MARCAS as marcas
+        except ImportError:
+            marcas = []
+    return tuple(sorted({re.sub(r"[^a-z0-9]", "", _sem_acento(str(m))) for m in marcas} - {""}))
+
+
+MARCAS = _carregar_marcas()
+
+
+def marcas_citadas(texto: str) -> set[str]:
+    """
+    Marcas da lista citadas no texto (sem acento, minúsculas).
+    Marcas curtas (até 5 letras: 'bb', 'gov', 'itau', 'caixa'...) precisam ser palavra inteira;
+    as longas também são achadas com espaço no meio ('Banco do Brasil' -> 'bancodobrasil').
+    """
+    normal = _sem_acento(texto)
+    compacto = re.sub(r"[^a-z0-9]", "", normal)
+    return {
+        m
+        for m in MARCAS
+        if (m in compacto if len(m) >= 6 else re.search(rf"(?<![a-z0-9]){re.escape(m)}(?![a-z0-9])", normal))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +380,31 @@ def _chat(**kwargs):
     return _cliente.chat(model=MODELO, keep_alive=KEEP_ALIVE, **kwargs)
 
 
+def _sintetizar(mensagens: list) -> tuple[dict, str]:
+    """Pede o veredito em JSON (format=schema). Devolve (veredito validado, JSON bruto)."""
+    resposta = _chat(messages=mensagens, format=SCHEMA_VEREDITO, options=OPCOES_SINTESE)
+    bruto = resposta.message.content or ""
+    return _validar_veredito(json.loads(bruto)), bruto
+
+
+def _marcas_ausentes(veredito: dict, presentes: set[str]) -> set[str]:
+    """Marcas citadas no parecer ou nos indícios que não aparecem na mensagem original."""
+    citado = " ".join([veredito["explicacao"], *veredito["sinais_de_alerta"]])
+    return marcas_citadas(citado) - presentes
+
+
+def _remover_marcas(veredito: dict, ausentes: set[str]) -> dict:
+    """Remove indícios (e frases do parecer) que citam marcas ausentes da mensagem."""
+    sinais = [s for s in veredito["sinais_de_alerta"] if not (marcas_citadas(s) & ausentes)]
+    frases = re.split(r"(?<=[.!?])\s+", veredito["explicacao"])
+    explicacao = " ".join(f for f in frases if not (marcas_citadas(f) & ausentes)).strip()
+    return {
+        **veredito,
+        "sinais_de_alerta": sinais,
+        "explicacao": explicacao or "A mensagem não traz informação suficiente para identificar o remetente; trate-a com cautela.",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Agente
 # ---------------------------------------------------------------------------
@@ -434,6 +517,9 @@ def analisar_stream(mensagem: str) -> Iterator[dict]:
     # 4) Síntese final em JSON ---------------------------------------------
     yield {"tipo": "etapa", "texto": "🧾 Gerando o veredito final..."}
     instrucao = INSTRUCAO_SINTESE
+    curta = not urls and len(texto.split()) <= LIMITE_CURTA
+    if curta:
+        instrucao = f"{AVISO_CURTA}\n\n{instrucao}"
     if extras:
         evidencias = "\n".join(
             f"- {e['nome']}({json.dumps(e['argumentos'], ensure_ascii=False)}) -> "
@@ -446,13 +532,35 @@ def analisar_stream(mensagem: str) -> Iterator[dict]:
     fallback = False
     t0 = time.perf_counter()
     try:
-        resposta = _chat(messages=mensagens, format=SCHEMA_VEREDITO, options=OPCOES_SINTESE)
-        veredito = _validar_veredito(json.loads(resposta.message.content))
+        veredito, bruto = _sintetizar(mensagens)
         yield {"tipo": "etapa", "texto": f"📋 Veredito gerado ({time.perf_counter() - t0:.1f} s)."}
     except Exception as erro:
         fallback = True
-        veredito = _veredito_fallback(registro, type(erro).__name__)
+        veredito, bruto = _veredito_fallback(registro, type(erro).__name__), ""
         yield {"tipo": "etapa", "texto": f"⚠️ Não consegui gerar o JSON do veredito ({erro}). Usando resposta de segurança."}
+
+    # Anti-alucinação: parecer/indícios não podem citar marca ausente da mensagem
+    presentes = marcas_citadas(mensagem) | marcas_citadas(texto)
+    ausentes = _marcas_ausentes(veredito, presentes)
+    refez = False
+    if ausentes and not fallback:
+        refez = True
+        nomes = ", ".join(sorted(ausentes))
+        yield {"tipo": "etapa", "texto": f"🔁 Anti-alucinação: o laudo citou {nomes}, que não está na mensagem. Refazendo a síntese..."}
+        mensagens += [
+            {"role": "assistant", "content": bruto},
+            {"role": "user", "content": AVISO_ALUCINACAO.format(marcas=nomes)},
+        ]
+        try:
+            veredito, _ = _sintetizar(mensagens)
+        except Exception:
+            pass  # mantém o veredito anterior e limpa abaixo
+        ausentes = _marcas_ausentes(veredito, presentes)
+    if ausentes:
+        veredito = _remover_marcas(veredito, ausentes)
+        yield {"tipo": "etapa", "texto": f"✂️ Anti-alucinação: indícios que citavam {', '.join(sorted(ausentes))} foram removidos."}
+    elif refez:
+        yield {"tipo": "etapa", "texto": "✅ Anti-alucinação: nova síntese sem entidades ausentes."}
 
     # Regra de segurança: link apontado como suspeito nunca resulta em SEGURO
     links_suspeitos = [r for r in registro if r["nome"] == "analisar_link" and r["resultado"].get("suspeito")]
@@ -462,6 +570,62 @@ def analisar_stream(mensagem: str) -> Iterator[dict]:
         veredito["sinais_de_alerta"].insert(0, f"Link suspeito: {url}")
         veredito["orientacao"] = ORIENTACAO_PADRAO["SUSPEITO"]
         yield {"tipo": "etapa", "texto": "🛡️ Regra de segurança: há link suspeito, então o risco foi elevado para SUSPEITO."}
+
+    # Trava de evidência: sem link suspeito e com menos de 2 ocorrências, o máximo é SUSPEITO (até 50)
+    totais = [
+        int(r["resultado"].get("total") or 0)
+        for r in registro
+        if r["nome"] == "buscar_padroes" and "erro" not in r["resultado"]
+    ]
+    ocorrencias = max(totais) if totais else None
+    if ocorrencias is not None and ocorrencias < 2 and not links_suspeitos:
+        if veredito["risco"] == "GOLPE" or veredito["pontuacao"] > 50:
+            de = f"{veredito['risco']} {veredito['pontuacao']}"
+            if veredito["risco"] == "GOLPE":
+                veredito["risco"] = "SUSPEITO"
+                veredito["explicacao"] += " Há poucos indícios concretos para afirmar que é golpe; trate com cautela."
+                veredito["orientacao"] = ORIENTACAO_PADRAO["SUSPEITO"]
+            veredito["pontuacao"] = min(veredito["pontuacao"], 50)
+            yield {
+                "tipo": "etapa",
+                "texto": f"🛡️ Trava de evidência: {ocorrencias} ocorrência(s) de padrão e nenhum link suspeito, "
+                f"risco limitado ({de} → {veredito['risco']} {veredito['pontuacao']}).",
+            }
+
+    # Piso de evidência: pedido de dinheiro + pressão (urgência ou ameaça) -> no mínimo SUSPEITO 55
+    encontrados: dict[str, set] = {}
+    for r in registro:
+        if r["nome"] == "buscar_padroes" and "erro" not in r["resultado"]:
+            for categoria, termos in (r["resultado"].get("encontrados") or {}).items():
+                if isinstance(termos, list) and termos:
+                    encontrados.setdefault(categoria, set()).update(map(str, termos))
+    pressao = sorted(encontrados.get("urgencia", set()) | encontrados.get("ameaca", set()))
+    dinheiro = sorted(encontrados.get("dinheiro", set()))
+    if dinheiro and pressao and veredito["pontuacao"] < PONTUACAO_PISO:
+        de = f"{veredito['risco']} {veredito['pontuacao']}"
+        termos = ", ".join(f'"{t}"' for t in (dinheiro[:2] + pressao[:2]))
+        if veredito["risco"] == "SEGURO":
+            # O parecer do modelo dizia "seguro" e contradiria o novo risco: substitui por um texto coerente.
+            veredito["explicacao"] = (
+                f"A mensagem envolve dinheiro ({', '.join(dinheiro[:2])}) e cria pressão ({', '.join(pressao[:2])}), "
+                "uma combinação muito comum em golpes. Não há como confirmar quem enviou só pelo texto."
+            )
+            veredito["orientacao"] = ORIENTACAO_PADRAO["SUSPEITO"]
+        veredito["risco"], veredito["pontuacao"] = "SUSPEITO", PONTUACAO_PISO
+        veredito["sinais_de_alerta"].insert(0, f"Pedido de dinheiro com pressão ({termos})")
+        yield {
+            "tipo": "etapa",
+            "texto": f"🛡️ Piso de evidência: dinheiro + urgência/ameaça ({termos}), "
+            f"risco mínimo aplicado ({de} → SUSPEITO {PONTUACAO_PISO}).",
+        }
+
+    # Mensagem curta, sem contexto: o parecer precisa dizer que falta informação
+    if curta and not re.search(
+        r"informac(ao|oes) suficientes?|falta(m)? (de )?informac|poucas informac|sem contexto",
+        _sem_acento(veredito["explicacao"]),
+    ):
+        veredito["explicacao"] = f"{FRASE_SEM_INFORMACAO} {veredito['explicacao']}"
+        yield {"tipo": "etapa", "texto": "📝 Mensagem curta: o parecer foi complementado com o aviso de falta de informação."}
 
     yield evento_final(veredito, fallback)
 
@@ -501,8 +665,10 @@ def aquecer_modelo() -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 def carregar_exemplos(caminho: str | Path = "exemplos.txt") -> list[dict]:
     """
-    Lê mensagens separadas por '---', cada uma começando com [GOLPE] ou [LEGITIMA].
-    Devolve [{"rotulo": "GOLPE"|"LEGITIMA"|None, "texto": str}]. Arquivo ausente -> [].
+    Lê blocos separados por '---'. Formato de cada bloco:
+        [GOLPE] Título curto          <- marcação + título (rótulo do botão no app)
+        texto da mensagem...          <- só isto é enviado ao agente
+    Devolve [{"rotulo": "GOLPE"|"LEGITIMA"|None, "titulo": str, "texto": str}]. Arquivo ausente -> [].
     """
     arquivo = Path(caminho)
     if not arquivo.is_absolute() and not arquivo.exists():
@@ -522,13 +688,15 @@ def carregar_exemplos(caminho: str | Path = "exemplos.txt") -> list[dict]:
     exemplos = []
     for bloco in re.split(r"^\s*-{3,}\s*$", conteudo, flags=re.MULTILINE):
         bloco = bloco.strip()
-        marcacao = re.match(r"^\[\s*(GOLPE|LEG[IÍ]TIMA)\s*\]\s*", bloco, re.IGNORECASE)
-        rotulo = None
+        rotulo, titulo = None, ""
+        marcacao = re.match(r"^\[\s*(GOLPE|LEG[IÍ]TIMA)\s*\][ \t]*", bloco, re.IGNORECASE)
         if marcacao:
             rotulo = "GOLPE" if marcacao.group(1).upper() == "GOLPE" else "LEGITIMA"
-            bloco = bloco[marcacao.end():].strip()
+            # O resto da 1ª linha é o TÍTULO; ele nunca entra no texto enviado ao agente.
+            titulo, _, bloco = bloco[marcacao.end():].partition("\n")
+            titulo, bloco = titulo.strip(), bloco.strip()
         if bloco:
-            exemplos.append({"rotulo": rotulo, "texto": bloco})
+            exemplos.append({"rotulo": rotulo, "titulo": titulo, "texto": bloco})
     return exemplos
 
 

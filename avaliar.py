@@ -49,7 +49,7 @@ def main() -> int:
         marca = "✅" if acertou else "❌"
         print(
             f"{marca} {i:>3}/{len(exemplos)}  esperado={ex['rotulo']:<8}  agente={veredito['risco']:<8} "
-            f"({veredito['pontuacao']:>3})  {resultado['tempo']:>5.1f}s  {cortar(ex['texto'], 50)}"
+            f"({veredito['pontuacao']:>3})  {resultado['tempo']:>5.1f}s  {cortar(ex.get('titulo') or ex['texto'], 50)}"
         )
 
     n = len(linhas)
@@ -78,7 +78,7 @@ def main() -> int:
     print(f"{'#':>3}  {'ESPERADO':<9} {'AGENTE':<9} {'PTS':>3}  MENSAGEM")
     print("-" * 70)
     for l in erros:
-        print(f"{linhas.index(l) + 1:>3}  {l['rotulo']:<9} {l['risco']:<9} {l['pontuacao']:>3}  {cortar(l['texto'], 48)}")
+        print(f"{linhas.index(l) + 1:>3}  {l['rotulo']:<9} {l['risco']:<9} {l['pontuacao']:>3}  {cortar(l.get('titulo') or l['texto'], 48)}")
         print(f"{'':>3}  ↳ {cortar(l['explicacao'], 62)}")
     return 0
 
