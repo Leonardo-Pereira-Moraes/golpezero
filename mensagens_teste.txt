@@ -1,0 +1,44 @@
+[GOLPE] Falso banco
+ITAU INFORMA: Detectamos uma compra não reconhecida de R$ 2.349,90 no seu cartão. Sua conta será bloqueada em até 24 horas. Para cancelar, acesse imediatamente: https://itau-seguranca.com/cancelar
+---
+[GOLPE] Correios / taxa
+Correios: Sua encomenda BR4829301BR está retida na alfândega. Para liberar a entrega, pague a taxa de liberação de R$ 39,90 ainda hoje. Após esse prazo o objeto será devolvido. Pague via Pix: http://correios-rastreio.top/taxa
+---
+[GOLPE] Pix errado
+Oi, desculpa incomodar! Fiz uma transferência de R$ 800 pra você por engano, era pro aluguel da minha mãe. Pode me devolver por Pix? É urgente, ela precisa pagar hoje. Minha chave pix é 11 98765-4321.
+---
+[GOLPE] Código do WhatsApp
+Olá! Aqui é da equipe do WhatsApp. Enviamos um código de verificação de 6 dígitos para o seu número por SMS. Me passa o código agora mesmo para confirmarmos sua conta, senão ela será desativada.
+---
+[GOLPE] Emprego falso
+Parabéns! Seu perfil foi selecionado para vaga home office: ganhe de R$ 300 a R$ 900 por dia só curtindo vídeos. Vagas limitadas, últimas horas! Para receber o primeiro pagamento, envie seu CPF e chave pix para o recrutador: https://bit.ly/vaga-home-renda
+---
+[GOLPE] Parente pedindo dinheiro
+Mãe, troquei de número, esse é o novo. Salva aí. Tô com um problema, o app do banco travou e preciso pagar um boleto urgente, vence hoje. Faz uma transferência pra mim? Amanhã te devolvo, juro.
+---
+[GOLPE] Receita Federal / CPF
+RECEITA FEDERAL: Seu CPF está irregular e pode ser cancelado. Há um processo judicial em seu nome. Regularize o quanto antes para evitar multa e nome negativado: https://receita-federal-cpf.online/consulta
+---
+[GOLPE] Prêmio / valor a receber
+Nubank: você tem um valor a receber de R$ 1.750,00 esquecido em sua conta. Última chance para resgatar! Confirme seus dados (CPF, data de nascimento e senha do cartão) no link: http://nubank-resgate.xyz
+---
+[GOLPE] Empréstimo com taxa antecipada
+Seu empréstimo aprovado de R$ 15.000 está pronto! Para liberar o valor na sua conta, é necessário pagar uma taxa de liberação de R$ 250 via Pix. Não perca, a oferta expira hoje. Dúvidas: http://189.45.112.30/emprestimo
+---
+[GOLPE] Falso suporte pedindo selfie e token
+Caixa: identificamos atividade suspeita no seu acesso. Seu acesso restrito será liberado após validação. Envie uma selfie segurando a foto do documento e informe o token gerado no app: http://caixa-validacao.click/app
+---
+[LEGITIMA] Aviso de Pix recebido
+Você recebeu um Pix de R$ 50,00 de JOAO SILVA. O valor já está disponível no seu saldo.
+---
+[LEGITIMA] Código de acesso (2FA)
+Seu código de acesso é 482913. Não compartilhe este código com ninguém, nem com funcionários do banco.
+---
+[LEGITIMA] Rastreio dos Correios
+Seu pedido #58213 foi enviado! Acompanhe a entrega pelo site oficial: https://www.correios.com.br — código de rastreio QB123456789BR.
+---
+[LEGITIMA] Lembrete de boleto da escola
+Olá, aqui é da secretaria do Colégio Esperança. Lembramos que a mensalidade de dezembro vence no dia 10. O boleto já está disponível no portal do aluno.
+---
+[LEGITIMA] Conversa entre amigos
+Fala! Bora no churrasco sábado? Cada um leva uma coisa, depois a gente divide a conta e cada um faz o pix pro Rafa.
