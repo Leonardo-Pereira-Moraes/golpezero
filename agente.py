@@ -592,30 +592,56 @@ def analisar_stream(mensagem: str) -> Iterator[dict]:
                 f"risco limitado ({de} → {veredito['risco']} {veredito['pontuacao']}).",
             }
 
-    # Piso de evidência: pedido de dinheiro + pressão (urgência ou ameaça) -> no mínimo SUSPEITO 55
+    # Piso de evidência -> no mínimo SUSPEITO 55 quando buscar_padroes achar:
+    #   regra 1: termo de "dinheiro" + termo de "urgencia" ou "ameaca"
+    #   regra 2: termo de "dados" ou "engenharia_social" + OUTRO termo (distinto) de
+    #            "urgencia", "ameaca" ou "engenharia_social"
     encontrados: dict[str, set] = {}
     for r in registro:
         if r["nome"] == "buscar_padroes" and "erro" not in r["resultado"]:
             for categoria, termos in (r["resultado"].get("encontrados") or {}).items():
                 if isinstance(termos, list) and termos:
                     encontrados.setdefault(categoria, set()).update(map(str, termos))
-    pressao = sorted(encontrados.get("urgencia", set()) | encontrados.get("ameaca", set()))
-    dinheiro = sorted(encontrados.get("dinheiro", set()))
-    if dinheiro and pressao and veredito["pontuacao"] < PONTUACAO_PISO:
+
+    def cat(*nomes: str) -> list[str]:
+        return sorted(set().union(*(encontrados.get(n, set()) for n in nomes)))
+
+    piso = None  # (termos que justificam, descrição do log, indício, frase do parecer)
+    pressao, dinheiro = cat("urgencia", "ameaca"), cat("dinheiro")
+    if dinheiro and pressao:
+        piso = (
+            dinheiro[:2] + pressao[:2],
+            "dinheiro + urgência/ameaça",
+            "Pedido de dinheiro com pressão",
+            f"A mensagem envolve dinheiro ({', '.join(dinheiro[:2])}) e cria pressão ({', '.join(pressao[:2])})",
+        )
+    else:
+        gatilhos = cat("dados") + [t for t in cat("engenharia_social") if t not in encontrados.get("dados", set())]
+        apoios = cat("urgencia", "ameaca", "engenharia_social")
+        par = next(((g, a) for g in gatilhos for a in apoios if g != a), None)
+        if par:
+            piso = (
+                list(par),
+                "pedido de dados/engenharia social + outro sinal",
+                "Pedido de dados ou manipulação",
+                f'A mensagem usa sinais de manipulação ou pede dados ("{par[0]}", "{par[1]}")',
+            )
+
+    if piso and veredito["pontuacao"] < PONTUACAO_PISO:
+        lista, regra, indicio, frase = piso
         de = f"{veredito['risco']} {veredito['pontuacao']}"
-        termos = ", ".join(f'"{t}"' for t in (dinheiro[:2] + pressao[:2]))
+        termos = ", ".join(f'"{t}"' for t in lista)
         if veredito["risco"] == "SEGURO":
             # O parecer do modelo dizia "seguro" e contradiria o novo risco: substitui por um texto coerente.
             veredito["explicacao"] = (
-                f"A mensagem envolve dinheiro ({', '.join(dinheiro[:2])}) e cria pressão ({', '.join(pressao[:2])}), "
-                "uma combinação muito comum em golpes. Não há como confirmar quem enviou só pelo texto."
+                f"{frase}, uma combinação muito comum em golpes. Não há como confirmar quem enviou só pelo texto."
             )
             veredito["orientacao"] = ORIENTACAO_PADRAO["SUSPEITO"]
         veredito["risco"], veredito["pontuacao"] = "SUSPEITO", PONTUACAO_PISO
-        veredito["sinais_de_alerta"].insert(0, f"Pedido de dinheiro com pressão ({termos})")
+        veredito["sinais_de_alerta"].insert(0, f"{indicio} ({termos})")
         yield {
             "tipo": "etapa",
-            "texto": f"🛡️ Piso de evidência: dinheiro + urgência/ameaça ({termos}), "
+            "texto": f"🛡️ Piso de evidência: {regra} ({termos}), "
             f"risco mínimo aplicado ({de} → SUSPEITO {PONTUACAO_PISO}).",
         }
 

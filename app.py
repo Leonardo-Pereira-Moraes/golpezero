@@ -3,7 +3,10 @@ GolpeZero — interface Streamlit com identidade de "laudo de perícia digital".
 Rode com:  streamlit run app.py
 """
 
+import base64
+import difflib
 import html
+import io
 import json
 import os
 import re
@@ -122,6 +125,15 @@ header[data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"], [d
   padding:.45rem .65rem 1.15rem .65rem; font-size:.86rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;
   box-shadow:0 1px 0 rgba(0,0,0,.12); margin-top:.4rem; }
 .wa .h { position:absolute; right:.5rem; bottom:.2rem; font-size:.66rem; color:#667781; }
+
+/* Material analisado vindo de print: miniatura + texto lido por OCR */
+.mat-print { display:flex; gap:1.4rem; align-items:flex-start; flex-wrap:wrap; margin-top:.4rem; }
+.print { margin:0; flex:none; max-width:260px; }
+.print img { display:block; width:100%; max-width:260px; height:auto; border:1px solid var(--tinta); border-radius:0; box-shadow:none; }
+.print figcaption { font-family:var(--mono); font-size:.68rem; letter-spacing:.04em; color:var(--cinza); margin-top:.35rem; }
+.mat-texto { flex:1; min-width:240px; }
+.ocr-txt { white-space:pre-wrap; word-wrap:break-word; font-size:.9rem; line-height:1.45;
+  border-left:2px solid var(--linha); padding:.1rem 0 .1rem .8rem; }
 
 /* Upload de print (OCR) */
 .st-key-caixa_print [data-testid="stFileUploaderDropzone"] { border-radius:0 !important; border:1px dashed var(--linha) !important;
@@ -257,7 +269,51 @@ def html_escala(valor: int, cor: str) -> str:
     )
 
 
-def html_laudo(final: dict, numero: int, emitido: str, mensagem: str, hora_msg: str) -> str:
+@st.cache_data(max_entries=8, show_spinner=False)
+def miniatura_data_uri(imagem: bytes) -> str:
+    """Reduz o print (2x a largura exibida, para ficar nítido) e devolve como data URI PNG. "" se falhar."""
+    try:
+        from PIL import Image, ImageOps
+
+        original = Image.open(io.BytesIO(imagem))
+        formato = (original.format or "").upper()
+        if original.width <= 520 and formato in ("PNG", "JPEG", "WEBP") and not original.getexif().get(0x0112):
+            # já é pequeno e não precisa girar: usa os bytes originais (reconverter só aumentaria o arquivo)
+            return f"data:image/{formato.lower()};base64," + base64.b64encode(imagem).decode("ascii")
+        foto = ImageOps.exif_transpose(original)
+        foto = foto.convert("RGBA" if foto.mode in ("RGBA", "LA", "P") else "RGB")
+        foto.thumbnail((520, 2400))
+        saida = io.BytesIO()
+        foto.save(saida, format="PNG", optimize=True)
+    except Exception:
+        return ""
+    if len(saida.getvalue()) >= len(imagem) and formato in ("PNG", "JPEG", "WEBP") and not original.getexif().get(0x0112):
+        # print de texto reduzido às vezes fica maior que o original: usa o menor
+        return f"data:image/{formato.lower()};base64," + base64.b64encode(imagem).decode("ascii")
+    return "data:image/png;base64," + base64.b64encode(saida.getvalue()).decode("ascii")
+
+
+def html_material(mensagem: str, hora_msg: str, print_bytes: bytes | None) -> str:
+    """Print enviado: miniatura + texto lido por OCR. Mensagem digitada: balão do WhatsApp."""
+    uri = miniatura_data_uri(print_bytes) if print_bytes else ""
+    if uri:
+        return (
+            '<div class="mat-print">'
+            f'<figure class="print"><img src="{uri}" alt="Print enviado">'
+            "<figcaption>Print enviado · texto lido por OCR</figcaption></figure>"
+            f'<div class="mat-texto"><div class="ocr-txt">{h(mensagem)}</div></div>'
+            "</div>"
+        )
+    return f'<div class="wa">{h(mensagem)}<span class="h">{h(hora_msg)} ✓✓</span></div>'
+
+
+def mesmo_material(texto: str, texto_ocr: str) -> bool:
+    """O texto do campo ainda é o do print? Correções pequenas contam como o mesmo material."""
+    a, b = " ".join(texto.split()), " ".join((texto_ocr or "").split())
+    return bool(b) and (a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.6)
+
+
+def html_laudo(final: dict, numero: int, emitido: str, mensagem: str, hora_msg: str, print_bytes: bytes | None = None) -> str:
     v = final["veredito"]
     cor = COR_RISCO.get(v["risco"], COR_RISCO["SUSPEITO"])
     n, auto = final.get("ferramentas", 0), final.get("automaticas", 0)
@@ -299,7 +355,7 @@ def html_laudo(final: dict, numero: int, emitido: str, mensagem: str, hora_msg: 
       </div>
       <div class="material">
         <div class="sub" style="margin-top:0">Material analisado</div>
-        <div class="wa">{h(mensagem)}<span class="h">{h(hora_msg)} ✓✓</span></div>
+        {html_material(mensagem, hora_msg, print_bytes)}
       </div>
     </div>
     """
@@ -324,18 +380,23 @@ def exemplos() -> list[dict]:
 
 
 ESTADO_INICIAL = {"mensagem": "", "eventos": [], "final": None, "analisada": None, "hora": "", "laudo_num": 0, "emitido": "",
-                  "aviso_print": "", "origem_print": ""}
+                  "aviso_print": "", "origem_print": "",
+                  "print_bytes": None,  # bytes do último print enviado
+                  "texto_ocr": "",      # texto que o OCR leu dele (para saber se o campo foi trocado)
+                  "laudo_print": None}  # print exibido no laudo atual (None = mensagem digitada)
 for chave, padrao in ESTADO_INICIAL.items():
     st.session_state.setdefault(chave, padrao)
+
+SEM_PRINT = {"aviso_print": "", "origem_print": "", "print_bytes": None, "texto_ocr": "", "laudo_print": None}
 
 
 def usar_exemplo(texto: str) -> None:
     st.session_state.mensagem = texto
-    st.session_state.update(eventos=[], final=None, analisada=None, aviso_print="", origem_print="")
+    st.session_state.update(eventos=[], final=None, analisada=None, **SEM_PRINT)
 
 
 def limpar() -> None:
-    st.session_state.update(mensagem="", eventos=[], final=None, analisada=None, aviso_print="", origem_print="")
+    st.session_state.update(mensagem="", eventos=[], final=None, analisada=None, **SEM_PRINT)
 
 
 def ler_print() -> None:
@@ -343,14 +404,18 @@ def ler_print() -> None:
     arquivo = st.session_state.get("upload_print")
     if arquivo is None:
         return
-    texto = ocr.extrair_texto(arquivo.getvalue())
+    imagem = arquivo.getvalue()
+    texto = ocr.extrair_texto(imagem)
     if texto:
         st.session_state.mensagem = texto
-        st.session_state.update(eventos=[], final=None, analisada=None, aviso_print="", origem_print=arquivo.name)
+        st.session_state.update(
+            eventos=[], final=None, analisada=None, aviso_print="", origem_print=arquivo.name,
+            print_bytes=imagem, texto_ocr=texto,
+        )
     else:
         st.session_state.update(
             aviso_print="Não foi possível ler texto neste print. Tente uma imagem mais nítida ou cole a mensagem.",
-            origem_print="",
+            origem_print="", print_bytes=None, texto_ocr="",
         )
 
 
@@ -428,7 +493,12 @@ if clicou:
         if not ok:
             bloco(f'<div class="aviso">Não é possível analisar agora. {h(status)}</div>', aviso_ph)
         else:
-            st.session_state.update(eventos=[], final=None, analisada=texto, hora=datetime.now().strftime("%H:%M"))
+            s = st.session_state
+            veio_do_print = bool(s.origem_print and s.print_bytes and mesmo_material(texto, s.texto_ocr))
+            s.update(
+                eventos=[], final=None, analisada=texto, hora=datetime.now().strftime("%H:%M"),
+                laudo_print=s.print_bytes if veio_do_print else None,
+            )
             bloco('<div class="cinza">Investigação em andamento. O laudo será emitido ao final.</div>', laudo_ph)
             final = None
             try:
@@ -457,7 +527,7 @@ else:
 
 if st.session_state.final:
     s = st.session_state
-    bloco(html_laudo(s.final, s.laudo_num, s.emitido, s.analisada, s.hora), laudo_ph)
+    bloco(html_laudo(s.final, s.laudo_num, s.emitido, s.analisada, s.hora, s.laudo_print), laudo_ph)
 elif not falhou:
     bloco('<div class="cinza">Nenhum laudo emitido nesta sessão.</div>', laudo_ph)
 
