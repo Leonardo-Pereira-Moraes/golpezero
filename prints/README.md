@@ -1,19 +1,27 @@
 # Prints de teste do OCR
 
-Prints feitos pela própria equipe, trocando entre nós as mensagens do `exemplos.txt`.
+Prints de conversas **fictícias**, gerados pela equipe: nomes, números de telefone e links são inventados
+(números terminados em `0000`/`1234`, domínios que não pertencem a nenhuma empresa).
 **Não usar imagens da internet nem conversas com dados de terceiros.**
-Antes de salvar, confira se não aparece nome, foto ou número de telefone de ninguém de fora da equipe.
+Se for acrescentar um print real, tampe nome, foto e número de quem não é da equipe e registre a fonte.
 
-| Arquivo | Mensagem (`exemplos.txt`) | Tema |
+O rótulo vem do nome do arquivo: `golpe_*` é golpe e `legitima_*` é mensagem legítima.
+
+| Arquivo | Golpe / mensagem | Formato |
 |---|---|---|
-| `golpe1.png` | [GOLPE] Parente pedindo dinheiro | claro |
-| `golpe2.png` | [GOLPE] Falso banco | escuro |
-| `golpe3.png` | [GOLPE] Código do WhatsApp | claro |
-| `golpe4.png` | [GOLPE] Correios / taxa (SMS) | claro ou escuro |
-| `legitima1.png` | [LEGITIMA] Código de acesso (2FA) | escuro |
+| `golpe_01_falso_banco_sms.png` | Falso banco com link imitando o Nubank | SMS, claro |
+| `golpe_02_falso_parente_whatsapp.png` | Falso parente com número novo pedindo Pix | WhatsApp, claro |
+| `golpe_03_correios_taxa_sms.png` | Taxa dos Correios com link encurtado | SMS, claro |
+| `golpe_04_codigo_whatsapp_escuro.png` | Pedido do código de verificação | WhatsApp, escuro |
+| `golpe_05_emprego_falso_escuro.png` | Emprego falso pedindo CPF e chave Pix | WhatsApp, escuro |
+| `golpe_06_valor_a_receber_sms.png` | Valor a receber pedindo CPF e senha | SMS, claro |
+| `legitima_01_pedido_entrega_whatsapp.png` | Aviso de entrega de loja | WhatsApp, claro |
+| `legitima_02_churrasco_escuro.png` | Conversa entre amigos citando "pix" | WhatsApp, escuro |
 
-Testar cada um com:
+Testar:
 
 ```
-python ocr.py prints/golpe1.png
+python ocr.py prints/golpe_01_falso_banco_sms.png   # um print
+python avaliar_ocr.py --so-ocr                       # texto extraído de todos
+python avaliar_ocr.py                                # print -> OCR -> agente, com acurácia
 ```

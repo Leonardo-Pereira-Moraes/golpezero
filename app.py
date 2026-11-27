@@ -14,6 +14,11 @@ import streamlit as st
 
 import agente
 
+try:  # OCR é opcional: sem pytesseract/Tesseract o app funciona só com texto
+    import ocr
+except Exception:
+    ocr = None
+
 BASE = Path(__file__).parent
 ARQ_CONTADOR = BASE / "contador.json"
 ARQ_EXEMPLOS = BASE / "exemplos.txt"
@@ -117,6 +122,12 @@ header[data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"], [d
   padding:.45rem .65rem 1.15rem .65rem; font-size:.86rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;
   box-shadow:0 1px 0 rgba(0,0,0,.12); margin-top:.4rem; }
 .wa .h { position:absolute; right:.5rem; bottom:.2rem; font-size:.66rem; color:#667781; }
+
+/* Upload de print (OCR) */
+.st-key-caixa_print [data-testid="stFileUploaderDropzone"] { border-radius:0 !important; border:1px dashed var(--linha) !important;
+  background:var(--papel2) !important; padding:.55rem .8rem !important; }
+.st-key-caixa_print [data-testid="stFileUploaderDropzone"] button { border-radius:0 !important; }
+.st-key-caixa_print small, .st-key-caixa_print [data-testid="stFileUploaderDropzoneInstructions"] span { font-family:var(--mono); font-size:.72rem; color:var(--cinza); }
 
 .rodape { font-family:var(--mono); font-size:.72rem; color:var(--cinza); border-top:1px solid var(--linha); margin-top:2rem; padding-top:.6rem; }
 
@@ -302,23 +313,45 @@ def aquecer() -> tuple[bool, str]:
     return agente.aquecer_modelo()
 
 
+@st.cache_resource(show_spinner=False)
+def ocr_ok() -> bool:
+    return bool(ocr and ocr.ocr_disponivel())
+
+
 @st.cache_data(ttl=30)
 def exemplos() -> list[dict]:
     return agente.carregar_exemplos(ARQ_EXEMPLOS)
 
 
-ESTADO_INICIAL = {"mensagem": "", "eventos": [], "final": None, "analisada": None, "hora": "", "laudo_num": 0, "emitido": ""}
+ESTADO_INICIAL = {"mensagem": "", "eventos": [], "final": None, "analisada": None, "hora": "", "laudo_num": 0, "emitido": "",
+                  "aviso_print": "", "origem_print": ""}
 for chave, padrao in ESTADO_INICIAL.items():
     st.session_state.setdefault(chave, padrao)
 
 
 def usar_exemplo(texto: str) -> None:
     st.session_state.mensagem = texto
-    st.session_state.update(eventos=[], final=None, analisada=None)
+    st.session_state.update(eventos=[], final=None, analisada=None, aviso_print="", origem_print="")
 
 
 def limpar() -> None:
-    st.session_state.update(mensagem="", eventos=[], final=None, analisada=None)
+    st.session_state.update(mensagem="", eventos=[], final=None, analisada=None, aviso_print="", origem_print="")
+
+
+def ler_print() -> None:
+    """Callback do upload: extrai o texto do print (OCR) e coloca no campo, para o visitante conferir antes de analisar."""
+    arquivo = st.session_state.get("upload_print")
+    if arquivo is None:
+        return
+    texto = ocr.extrair_texto(arquivo.getvalue())
+    if texto:
+        st.session_state.mensagem = texto
+        st.session_state.update(eventos=[], final=None, analisada=None, aviso_print="", origem_print=arquivo.name)
+    else:
+        st.session_state.update(
+            aviso_print="Não foi possível ler texto neste print. Tente uma imagem mais nítida ou cole a mensagem.",
+            origem_print="",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +377,20 @@ with esq:
         label_visibility="collapsed",
         placeholder="Cole aqui a mensagem de WhatsApp, SMS ou e-mail a ser analisada.",
     )
+    if ocr_ok():
+        with st.container(key="caixa_print"):
+            st.file_uploader(
+                "Ou envie um print da conversa",
+                type=["png", "jpg", "jpeg", "webp"],
+                key="upload_print",
+                on_change=ler_print,
+                label_visibility="collapsed",
+                help="O texto do print é lido no próprio computador (OCR) e colocado no campo acima.",
+            )
+        if st.session_state.origem_print:
+            bloco(f'<div class="cinza">Texto extraído de <b>{h(st.session_state.origem_print)}</b> por OCR. Confira e corrija antes de analisar.</div>')
+        if st.session_state.aviso_print:
+            bloco(f'<div class="aviso">{h(st.session_state.aviso_print)}</div>')
     b1, b2 = st.columns([3, 2])
     clicou = b1.button("Analisar mensagem", type="primary", width="stretch")
     with b2.container(key="caixa_limpar"):

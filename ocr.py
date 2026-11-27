@@ -47,7 +47,20 @@ LINHAS_DE_INTERFACE = {
     "texto",
     "hoje",
     "ontem",
+    "online",
+    "digitando...",
+    "conta comercial",
 }
+
+# Linhas da interface reconhecidas por padrão (barra de status, cabeçalhos do app de SMS).
+_LINHA_DE_INTERFACE = re.compile(
+    r"^(\S{1,3}\s+)?\d{1,3}\s?%$"                    # barra de status: "5G 82%", "82%"
+    r"|^mensagem de texto\b"                         # cabeçalho do app de SMS: "Mensagem de Texto • Hoje 14:31"
+    r"|^visto por [uú]ltimo\b",                       # "visto por último hoje às 13:50"
+    re.IGNORECASE,
+)
+_VOGAL = re.compile(r"[aeiouáéíóúâêôãõà]", re.IGNORECASE)
+TAMANHO_MAX_RUIDO = 4  # "v7", "Q", "v/“": restos dos tiques de leitura e de ícones
 
 _HORARIO = re.compile(r"\b([01]?\d|2[0-3])[:h][0-5]\d\b")  # 13:28, 13h28 (não "12.90")
 _TIQUES = re.compile(r"[✓✔√]+")
@@ -147,7 +160,7 @@ def preprocessar(imagem: Image.Image) -> Image.Image:
 # --------------------------------------------------------------------------- #
 
 def limpar_texto(texto: str) -> str:
-    """Remove horários, tiques de leitura, textos da interface e linhas vazias."""
+    """Remove horários, tiques de leitura, textos da interface, barra de status, ruído e linhas vazias."""
     linhas = []
     for linha in texto.splitlines():
         linha = _HORARIO.sub("", linha)
@@ -155,7 +168,9 @@ def limpar_texto(texto: str) -> str:
         linha = re.sub(r"\s+", " ", linha).strip(" |-–—·•")
         if not _TEM_LETRA_OU_NUMERO.search(linha):  # vazia ou só lixo de ícone
             continue
-        if linha.casefold() in LINHAS_DE_INTERFACE:
+        if linha.casefold() in LINHAS_DE_INTERFACE or _LINHA_DE_INTERFACE.search(linha):
+            continue
+        if len(linha) <= TAMANHO_MAX_RUIDO and not _VOGAL.search(linha):  # ruído de ícone, não palavra
             continue
         linhas.append(linha)
     return "\n".join(linhas)
