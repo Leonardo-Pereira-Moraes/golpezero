@@ -1,0 +1,14 @@
+[browser]
+# Sem telemetria: o app roda 100% offline durante a demo
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#1A1A1A"
+backgroundColor = "#F4F1EA"
+secondaryBackgroundColor = "#EBE6DB"
+textColor = "#1A1A1A"
+font = "sans serif"
